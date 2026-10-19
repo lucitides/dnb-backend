@@ -20,6 +20,7 @@ import {
 } from "./src/middlewares/security.js";
 import { sanitizeInput } from "./src/middlewares/validate.js";
 import { rtlMiddleware } from "./src/middlewares/rtl.js";
+import { trackActivity } from "./src/middlewares/analytics/activityTracker.js";
 import {
   errorHandler,
   notFound,
@@ -28,6 +29,7 @@ import {
 import authRoutes from "./src/routes/authRoutes.js";
 import courseRoutes from "./src/routes/courses/courseRoutes.js";
 import courseAnalyticsRoutes from "./src/routes/courses/analyticsRoutes.js";
+import quizRoutes from "./src/routes/courses/quizRoutes.js";
 import reelsRoute from "./src/routes/reelsRoutes.js";
 import userRoutes from "./src/routes/userRoutes.js";
 import bookRoutes from "./src/routes/books/bookRoutes.js";
@@ -43,9 +45,12 @@ import stellarAnalyticsRoutes from "./src/routes/stellar/analyticsRoutes.js";
 import stellarPaymentRoutes from "./src/routes/stellar/paymentRoutes.js";
 import stellarExportRoutes from "./src/routes/stellar/exportRoutes.js";
 import stellarDonationRoutes from "./src/routes/stellar/donationRoutes.js";
+import stellarScholarshipRoutes from "./src/routes/stellar/scholarshipRoutes.js";
 import stellarOnrampRoutes from "./src/routes/stellar/onrampRoutes.js";
 import stellarPledgeRoutes from "./src/routes/stellar/pledgeRoutes.js";
 import stellarGiftRoutes from "./src/routes/stellar/giftRoutes.js";
+import stellarAnchorRoutes from "./src/routes/stellar/anchorRoutes.js";
+import stellarReportsRoutes from "./src/routes/stellar/reportsRoutes.js";
 import payoutRoutes from "./src/routes/payoutRoutes.js";
 import uploadRoutes from "./src/routes/uploadRoutes.js";
 import notificationRoutes from "./src/routes/notificationRoutes.js";
@@ -64,9 +69,12 @@ import courseBundleRoutes from "./src/routes/course-bundle.routes.js";
 import certificateRoutes from "./src/routes/certificate.routes.js";
 import badgeRoutes from "./src/routes/badge.routes.js";
 import achievementRoutes from "./src/routes/api/achievements.js";
+import activeUsersRoutes from "./src/routes/analytics/activeUsersRoutes.js";
+import contentPerformanceRoutes from "./src/routes/analytics/contentPerformanceRoutes.js";
 import { healthCheck, ping } from "./src/controllers/healthController.js";
 import databaseHealthRoutes from "./src/routes/health/database.js";
 import databaseMetricsRoutes from "./src/routes/metrics/database.js";
+import searchAnalyticsRoutes from "./src/routes/analytics/search.js";
 
 // Issue #212 — Hashtag trending
 import hashtagRoutes from "./src/routes/hashtagRoutes.js";
@@ -178,11 +186,24 @@ app.use(
 );
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
-app.use(compression());
+app.use(
+  compression({
+    threshold: 1024,
+    level: 6,
+    filter: (req, res) => {
+      if (req.headers["x-no-compression"]) return false;
+      return compression.filter(req, res);
+    },
+  })
+);
 app.use(mongoSanitizeMiddleware);
 app.use(hppMiddleware);
 app.use(sanitizeInput);
 app.use(rtlMiddleware);
+
+// Issue #243 — Real-time active-user tracking. Runs for every request and
+// only does work when a valid Bearer token is present (see the middleware).
+app.use(trackActivity);
 
 // Issue #246 — Capture page visits across the platform. Applied globally after
 // request parsing so every navigation (GET) is recorded for journey analysis;
@@ -228,6 +249,7 @@ app.use("/api/certificates", generousLimiter, certificateRoutes);
 app.use("/api/badges", generousLimiter, badgeRoutes);
 app.use("/api/achievements", generousLimiter, achievementRoutes);
 app.use("/api/courses", generousLimiter, courseRoutes);
+app.use("/api", generousLimiter, quizRoutes);
 app.use("/api/categories", generousLimiter, categoryRoutes);
 app.use("/api/reels", generousLimiter, reelsRoute);
 app.use("/api/books", generousLimiter, bookRoutes);
@@ -248,9 +270,12 @@ app.use("/api/stellar/analytics", generousLimiter, stellarAnalyticsRoutes);
 app.use("/api/stellar/payment", paymentLimiter, stellarPaymentRoutes);
 app.use("/api/stellar/export", paymentLimiter, stellarExportRoutes);
 app.use("/api/stellar/donation", generousLimiter, stellarDonationRoutes);
+app.use("/api/stellar/scholarships", generousLimiter, stellarScholarshipRoutes);
 app.use("/api/stellar/onramp", generousLimiter, stellarOnrampRoutes);
 app.use("/api/stellar/pledges", generousLimiter, stellarPledgeRoutes);
 app.use("/api/stellar/gifts", generousLimiter, stellarGiftRoutes);
+app.use("/api/stellar/anchor", standardLimiter, stellarAnchorRoutes);
+app.use("/api/stellar/reports", standardLimiter, stellarReportsRoutes);
 app.use("/api/notifications", generousLimiter, notificationRoutes);
 
 // Outbound webhook management API (admin-gated)
@@ -262,6 +287,9 @@ app.use("/api/internal/ai", internalAiRoutes);
 // MongoDB connection-pool metrics (Prometheus text format) — see
 // docs/connection-pool-metrics.md for scrape config + Grafana panels.
 app.use("/metrics/database", databaseMetricsRoutes);
+
+// Issue #245 - Search analytics (admin-gated).
+app.use("/api/analytics/search", generousLimiter, searchAnalyticsRoutes);
 
 // Admin — no rate limit
 app.use("/admin/jobs", jobsRoutes);
@@ -277,6 +305,11 @@ app.use(versionMiddleware);
 // /api/v1/* and /api/v2/* let clients pin to a specific version.
 app.use("/api/v1", generousLimiter, v1Router);
 app.use("/api/v2", generousLimiter, v2Router);
+
+// Issue #243 — Real-time platform analytics (active users).
+app.use("/api/analytics", generousLimiter, activeUsersRoutes);
+// Issue #244 — Content performance analytics (views, engagement, completion).
+app.use("/api/analytics", generousLimiter, contentPerformanceRoutes);
 
 // Issue #212 — Hashtag trending endpoints.
 app.use("/api/hashtags", generousLimiter, hashtagRoutes);
